@@ -1,0 +1,15 @@
+[MESSAGES CONTROL]
+
+disable=
+    missing-docstring,                  # Temporary, until I add the docstrings
+    fixme,                              # Temporary, until I fix all the TODOs and FIXMEs
+    too-many-arguments,                 # Matter of taste
+    too-many-instance-attributes,       # Matter of taste
+    too-few-public-methods,             # Matter of taste
+    too-many-public-methods,            # Matter of taste
+    too-many-branches,                  # Matter of taste
+    too-many-nested-blocks,             # Matter of taste
+    too-many-return-statements,         # Matter of taste
+    no-self-use,                        # Matter of taste
+    no-else-return,                     # Matter of taste
+    duplicate-code,                     # Matter of taste

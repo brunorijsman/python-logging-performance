@@ -1,0 +1,8 @@
+{
+    "python.pythonPath": "env/bin/python",
+    "cSpell.words": [
+        "usecs"
+    ],
+    "python.linting.pylintEnabled": true,
+    "python.linting.enabled": true
+}
