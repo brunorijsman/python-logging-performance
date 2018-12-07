@@ -1,60 +1,82 @@
 #!/usr/bin/env python
 
-###@@@ pylint does not work from command-line and also not in editor
-
-import argparse
 import logging
 import os
+import sys
 import time
 
+import table
+
+LOG_FILE_NAME = "performance.log"
+ITERATIONS = 10000
+
+LOG_METHOD_ARGS = 0
+LOG_METHOD_PERCENT = 1
+LOG_METHOD_FORMAT = 2
+
+global_parameter_expense = None
+
 def main():
-    args = parse_command_line_arguments()
-    report_args(args)
-    performance_measurement(args)
+    global global_parameter_expense
+    scenarios = [
+    #    Message level     Logger level      Nr par  Par expense  Log method
+        (logging.CRITICAL, logging.CRITICAL, 0,      None,        LOG_METHOD_ARGS),
+        (logging.CRITICAL, logging.CRITICAL, 0,      500,         LOG_METHOD_ARGS),
+        (logging.ERROR,    logging.CRITICAL, 0,      None,        LOG_METHOD_ARGS),
+        (logging.CRITICAL, logging.CRITICAL, 2,      None,        LOG_METHOD_ARGS),
+        (logging.CRITICAL, logging.CRITICAL, 2,      None,        LOG_METHOD_PERCENT),
+        (logging.CRITICAL, logging.CRITICAL, 2,      None,        LOG_METHOD_FORMAT),
+        (logging.ERROR,    logging.CRITICAL, 2,      None,        LOG_METHOD_ARGS),
+        (logging.ERROR,    logging.CRITICAL, 2,      None,        LOG_METHOD_PERCENT),
+        (logging.ERROR,    logging.CRITICAL, 2,      None,        LOG_METHOD_FORMAT),
+        (logging.CRITICAL, logging.CRITICAL, 2,      500,         LOG_METHOD_ARGS),
+        (logging.CRITICAL, logging.CRITICAL, 2,      500,         LOG_METHOD_PERCENT),
+        (logging.CRITICAL, logging.CRITICAL, 2,      500,         LOG_METHOD_FORMAT),
+        (logging.ERROR,    logging.CRITICAL, 2,      500,         LOG_METHOD_ARGS),
+        (logging.ERROR,    logging.CRITICAL, 2,      500,         LOG_METHOD_PERCENT),
+        (logging.ERROR,    logging.CRITICAL, 2,      500,         LOG_METHOD_FORMAT),
+    ]
+    if os.path.exists(LOG_FILE_NAME):
+        os.remove(LOG_FILE_NAME)
+    logging.basicConfig(filename=LOG_FILE_NAME, 
+                        format='%(asctime)s:%(levelname)s:%(name)s:%(message)s')
+    logger = logging.getLogger('performance')
+    tab = table.Table()
+    tab.add_row([["Message", "Level"],
+                 ["Logger", "Level"],
+                 ["Parameter", "Count"],
+                 ["Parameter", "Expense"],
+                 ["Log", "Method"],
+                 ["Lines", "Logged"],
+                 ["Iteration", "usecs"]])
+    for scenario in scenarios:
+        (message_level, logger_level, nr_parameters, parameter_expense, log_method) = scenario
+        run_scenario(tab, logger, message_level, logger_level, nr_parameters, parameter_expense,
+                     log_method)
+    print(tab.to_string())
 
-def parse_command_line_arguments():
-    parser = argparse.ArgumentParser(description='Python Logging Performance Analysis')
-    parser.add_argument(
-        '--iterations',
-        type=int,
-        default=1000,
-        help='Number of iterations; default 1000')
-    parser.add_argument(
-        '--message-level',
-        type=level,
-        default='error', 
-        help='Message level (critical, error, warning, info, debug); default error')
-    parser.add_argument(
-        '--logger-level', 
-        type=level, 
-        default='error', 
-        help='Logger level (critical, error, warning, info, debug); default error')
-    args = parser.parse_args()
-    return args
+def run_scenario(tab, logger, message_level, logger_level, nr_parameters, parameter_expense,
+                 log_method):
+    global global_parameter_expense
+    lines_before = lines_in_log_file()
+    logger.setLevel(logger_level)
+    baseline_elapsed_secs = measure_loop(logger, no_op)
+    log_function = select_log_function(message_level, nr_parameters, log_method)
+    global_parameter_expense = parameter_expense
+    total_elapsed_secs = measure_loop(logger, log_function)
+    adjusted_elapsed_secs = total_elapsed_secs - baseline_elapsed_secs
+    usecs_per_iteration = 1000000.0 * adjusted_elapsed_secs / ITERATIONS
+    lines_after = lines_in_log_file()
+    added_lines = lines_after - lines_before
+    tab.add_row([level_str(message_level),
+                 level_str(logger_level),
+                 nr_parameters,
+                 parameter_expense,
+                 log_method_str(log_method),
+                 added_lines,
+                 "{:.3f}".format(usecs_per_iteration)])
 
-def level(string):
-    string = string.lower()
-    if string == 'critical':
-        return logging.CRITICAL
-    elif string == 'error':
-        return logging.ERROR
-    elif string == 'warning':
-        return logging.WARNING
-    elif string == 'info':
-        return logging.INFO
-    elif string == 'debug':
-        return logging.DEBUG
-    else:
-        msg = "{} is not a valid level".format(string)
-        raise argparse.ArgumentTypeError(msg)
-
-def report_args(args):
-    print("Number of iterations : {} secs".format(args.iterations))
-    print("Message level        : {}".format(level_to_str(args.message_level)))
-    print("Logger level         : {}".format(level_to_str(args.logger_level)))
-    print()
-
-def level_to_str(level):
+def level_str(level):
     if level == logging.CRITICAL:
         return "CRITICAL"
     elif level == logging.ERROR:
@@ -68,52 +90,109 @@ def level_to_str(level):
     else:
         assert False
 
-def performance_measurement(args):
-    logger = create_logger(args)
+def log_method_str(method):
+    if method == LOG_METHOD_ARGS:
+        return "args"
+    elif method == LOG_METHOD_PERCENT:
+        return "percent"
+    elif method == LOG_METHOD_FORMAT:
+        return "format"
+    else:
+        assert False
+
+def select_log_function(message_level, nr_parameters, log_method):
+    if message_level == logging.CRITICAL:
+        if nr_parameters == 0:
+            return log_critical_0_par
+        elif nr_parameters == 2:
+            if log_method == LOG_METHOD_ARGS:
+                return log_critical_2_par_args
+            elif log_method == LOG_METHOD_PERCENT:
+                return log_critical_2_par_percent
+            elif log_method == LOG_METHOD_FORMAT:
+                return log_critical_2_par_format
+            else:
+                sys.exit("No log function for log method")
+        else:
+            sys.exit("No log function for number of parameters")
+    elif message_level == logging.ERROR:
+        if nr_parameters == 0:
+            return log_error_0_par
+        elif nr_parameters == 2:
+            if log_method == LOG_METHOD_ARGS:
+                return log_error_2_par_args
+            elif log_method == LOG_METHOD_PERCENT:
+                return log_error_2_par_percent
+            elif log_method == LOG_METHOD_FORMAT:
+                return log_error_2_par_format
+            else:
+                sys.exit("No log function for log method")
+        else:
+            sys.exit("No log function for number of parameters")
+    else:
+        sys.exit("No log function for message severity")
+
+def measure_loop(logger, log_function):
     start_time = time.perf_counter()
     iteration = 1
-    while iteration <= args.iterations:
-        log_no_filter_no_args(logger)
+    while iteration <= ITERATIONS:
+        log_function(logger)
         iteration += 1
-    time.sleep(2.1)
     end_time = time.perf_counter()
-    total_elapsed_secs = end_time - start_time
-    usecs_per_iteration = 1000000.0 * total_elapsed_secs / args.iterations
-    print("Total elapsed time   : {:.3f} secs".format(total_elapsed_secs))
-    print("Time per iteration   : {:.3f} usecs".format(usecs_per_iteration))
+    elapsed_secs = end_time - start_time
+    return elapsed_secs
 
-def select_log_function(args):
-    log_functions = [
-        (logging.CRITICAL, log_critical),
-        (logging.ERROR,    message_error),
-        (logging.WARNING,  message_warning),
-        (logging.INFO,     message_info),
-        (logging.DEBUG,    message_debug),
-    ]
-    for (message_level, log_function) in log_functions:
-        if message_level == args.message_level:
-            return log_function
-    assert False, "Could not find log function that matches command line arguments"
+def no_op(_logger):
+    pass
 
-def log_critical(logger):
+def log_error_0_par(logger):
+    logger.error("This is an error message")
+
+def log_critical_0_par(logger):
     logger.critical("This is a critical message")
 
-def message_error(logger):
-    logger.critical("This is an error message")
+def log_error_2_par_args(logger):
+    logger.error("This is an error message: x=%s y=%s", x_par(), y_par())
 
-def message_error(logger):
-    logger.critical("This is an error message")
+def log_critical_2_par_args(logger):
+    logger.critical("This is a critical message: x=%s y=%s", x_par(), y_par())
 
-def create_logger(args):
-    log_file_name = "performance.log"
-    if os.path.exists(log_file_name):
-        os.remove(log_file_name)
-    logging.basicConfig(
-        filename=log_file_name,
-        format='%(asctime)s:%(levelname)s:%(name)s:%(message)s',
-        level=args.logger_level)
-    logger = logging.getLogger('performance')
-    return logger
+def log_error_2_par_percent(logger):
+    logger.error("This is an error message: x=%s y=%s" % (x_par(), y_par()))
+
+def log_critical_2_par_percent(logger):
+    logger.critical("This is a critical message: x=%s y=%s" % (x_par(), y_par()))
+
+def log_error_2_par_format(logger):
+    logger.error("This is an error message: x={} y={}".format(x_par(), y_par()))
+
+def log_critical_2_par_format(logger):
+    logger.critical("This is a critical message: x={} y={}".format(x_par(), y_par()))
+
+def x_par():
+    global global_parameter_expense
+    if global_parameter_expense is not None:
+        incur_expense(global_parameter_expense)
+    return "this-is-the-value-for-x"
+
+def y_par():
+    global global_parameter_expense
+    if global_parameter_expense is not None:
+        incur_expense(global_parameter_expense)
+    return "this-is-the-value-for-y"
+
+def incur_expense(expense):
+    dummy = 1
+    i = 0
+    while i < expense:
+        dummy = 2 * dummy - 1
+        i += 1
+
+def lines_in_log_file():
+    if not os.path.exists(LOG_FILE_NAME):
+        return 0
+    count = 0
+    return sum(1 for line in open(LOG_FILE_NAME))
 
 if __name__ == "__main__":
     main()
